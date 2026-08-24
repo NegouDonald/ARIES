@@ -39,7 +39,7 @@ import (
 const (
 	defaultDockerSocket   = "/var/run/docker.sock"
 	defaultCleanupTimeout = 30 * time.Second
-	defaultStartTimeout   = 45 * time.Second
+	defaultStartTimeout   = 120 * time.Second
 	defaultAgentTimeout   = 20 * time.Minute
 	maxDockerOutput       = 16 << 20
 	maxAPIKeyBytes        = 16 << 10
