@@ -127,7 +127,19 @@ type RealtimeTTSConfig struct {
 }
 
 type SandboxConfig struct {
-	Type string `json:"type"`
+	Type     string               `json:"type"`
+	Sandlock SandlockConfigValues `json:"sandlock,omitempty"`
+}
+
+type SandlockConfigValues struct {
+	// Executable is the path to the sandlock CLI binary on the host running
+	// the experiment.
+	Executable string `json:"executable,omitempty"`
+	// RootfsCacheDir holds materialized task image filesystems, shared and
+	// read-only across tasks that use the same pinned image.
+	RootfsCacheDir     string        `json:"rootfs_cache_dir,omitempty"`
+	CleanupTimeoutText string        `json:"cleanup_timeout,omitempty"`
+	CleanupTimeout     time.Duration `json:"-"`
 }
 
 type BridgeConfig struct {
@@ -364,6 +376,9 @@ func (c *Config) validate() error {
 	if err := c.Harness.validate(); err != nil {
 		return err
 	}
+	if err := c.Sandbox.validate(); err != nil {
+		return err
+	}
 	if err := c.Runtime.validate(); err != nil {
 		return err
 	}
@@ -440,6 +455,29 @@ func (h *HarnessConfig) validate() error {
 	default:
 		return errors.New("harness.mode must be agent or realtime")
 	}
+}
+
+// validate leaves sandbox.type itself as an opaque string: like
+// benchmark.type/harness.type/bridge.type, the enum of concrete
+// implementations is owned exclusively by cmd/aries's explicit component
+// switch, not by pkg/config (see cmd/aries/wiring.go's validateComponents).
+// It only conditionally validates the nested Sandlock block.
+func (c *SandboxConfig) validate() error {
+	if c.Type != "sandlock" {
+		if c.Sandlock != (SandlockConfigValues{}) {
+			return errors.New("sandbox.sandlock must be empty unless sandbox.type is sandlock")
+		}
+		return nil
+	}
+	if strings.TrimSpace(c.Sandlock.Executable) == "" {
+		return errors.New("sandlock sandbox.sandlock.executable is required")
+	}
+	if strings.TrimSpace(c.Sandlock.RootfsCacheDir) == "" {
+		return errors.New("sandlock sandbox.sandlock.rootfs_cache_dir is required")
+	}
+	var err error
+	c.Sandlock.CleanupTimeout, err = parseOptionalPositiveDuration("sandbox.sandlock.cleanup_timeout", c.Sandlock.CleanupTimeoutText)
+	return err
 }
 
 func (tts *RealtimeTTSConfig) validate() error {
