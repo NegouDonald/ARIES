@@ -46,7 +46,19 @@ unmodified.
   writable copy, bind-mounted over the shared rootfs inside a private,
   unprivileged mount namespace (`unshare --user --map-root-user --mount
   --pid` + `pivot_root`) before Sandlock runs (`pkg/sandbox/sandlock/process.go`).
-  This needs unprivileged user namespaces enabled on the host.
+  This needs unprivileged user namespaces enabled on the host; on Ubuntu
+  24.04+ that also means `kernel.apparmor_restrict_unprivileged_userns` must
+  allow it (AppArmor gates unprivileged user namespace creation independently
+  of the older `kernel.unprivileged_userns_clone` sysctl).
+- sandlock's own `cargo install` build is dynamically linked against glibc,
+  and sandlock's source does not currently build for the musl target (an
+  upstream `libc`-crate type mismatch between glibc's and musl's `ioctl`/
+  `ptrace` bindings, as of sandlock-cli v0.8.6 — unrelated to ARIES). A task
+  image with a different or absent libc (Alpine's musl, for one) can't run
+  the embedded sandlock binary directly, so `pkg/sandbox/sandlock/runtime.go`
+  resolves sandlock's shared library dependencies once via `ldd` and embeds
+  them at a fixed, collision-free in-rootfs path, invoking sandlock through
+  its own bundled ELF interpreter with an explicit `--library-path`.
 - The existing SSH bridges require `NetworkGateway`/`NetworkName`/
   `ContainerID`/`ContainerName`/`ExecStream` on the sandbox, and
   `NetworkGateway` is load-bearing: the bridge listens on it so the harness
@@ -59,12 +71,18 @@ unmodified.
 Also unlike Docker, `Environment.AllowNetwork` (a boolean) cannot be honored:
 Sandlock requires an explicit per-host allow-list, so `Start` rejects
 `allow_network: true` outright rather than silently granting broader network
-access than requested.
+access than requested. In practice this means Sandlock currently cannot run
+any Terminal-Bench 2 task from the pinned `terminal-bench-2` revision, since
+every task in that checkout sets `allow_internet = true`; running a real task
+end to end needs either a task suite with network-free tasks or a future
+per-host allow-list mechanism on top of `Environment`.
 
-**Not exercised end to end**: this dev environment has no Landlock-active
-kernel, no `sandlock` binary, and no Rust toolchain, so the code compiles,
-passes `go vet`, and is unit-tested with fakes (`pkg/sandbox/sandlock/*_test.go`),
-and a full `aries` profile using it passes every component/pairing check and
-image/config validation — but real Landlock/seccomp enforcement, real
-`sandlock run` behavior, and `unshare`+`pivot_root` behavior have not been
-run on a real Linux 6.12+ host with the `sandlock` CLI installed.
+**Verified end to end** on a real Linux 6.12+ host (kernel 7.0.0, Landlock
+active, `apparmor_restrict_unprivileged_userns` disabled) with the `sandlock`
+CLI installed: `Manager.Start` against a plain `alpine:3.19` image followed
+by `Sandbox.Exec` of `uname -a; id; cat /etc/os-release` returned exit code 0
+with output confirming the command ran genuinely confined inside the
+materialized Alpine rootfs, followed by a clean `Manager.Stop`. This was
+exercised directly against the package (bypassing Terminal-Bench 2, per the
+`allow_internet` limitation above), not yet through a full `aries` profile
+run with a real benchmark task.
