@@ -21,10 +21,12 @@ const (
 	confirmTimeout      = 2 * time.Second
 )
 
-// inContainerSandlockPath is where the host sandlock binary is bind-mounted
-// inside the materialized rootfs before pivot_root, so it stays executable
-// after the pivot even though the pivoted filesystem is an arbitrary task
-// image that was never built with sandlock inside it.
+// inContainerSandlockPath is where the host sandlock binary is copied inside
+// the materialized rootfs (see rootfs.go's copySandlockBinary), so it is
+// already an ordinary file by the time this shell pivots into that tree.
+// Bind-mounting the binary in at exec time instead was tried first and
+// proved fragile: the mount did not reliably survive pivot_root with usable
+// exec permission in practice, even with a recursive (--rbind) self-mount.
 const inContainerSandlockPath = "/.aries-sandlock"
 
 // pivotShell remaps the sandboxed process's mount namespace root to the
@@ -35,14 +37,9 @@ const inContainerSandlockPath = "/.aries-sandlock"
 // privilege on the host). taskdir is bind-mounted onto workdir first so the
 // task's own writes land in its private per-task directory rather than the
 // shared, read-only cached rootfs other tasks may be reading concurrently.
-// The host sandlock binary is bind-mounted into the new root at a fixed path
-// for the same reason: after pivot_root, only paths inside the new root
-// resolve, and the task image was never built with sandlock inside it.
 const pivotShell = `set -e
-rootfs=$1; workdir=$2; taskdir=$3; dir=$4; sandlockhost=$5; shift 5
+rootfs=$1; workdir=$2; taskdir=$3; dir=$4; shift 4
 mount --bind "$taskdir" "$rootfs$workdir"
-touch "$rootfs` + inContainerSandlockPath + `"
-mount --bind "$sandlockhost" "$rootfs` + inContainerSandlockPath + `"
 mkdir -p "$rootfs/.aries-oldroot"
 mount --bind "$rootfs" "$rootfs"
 cd "$rootfs"
@@ -53,7 +50,7 @@ exec ` + inContainerSandlockPath + ` "$@"`
 
 // buildArgv assembles the unshare/pivot/sandlock invocation for one command.
 // It is pure: it performs no I/O and can be tested without a sandlock binary.
-func buildArgv(sandlockExecutable, rootfsDir, workdir, taskDir, memoryFlag string, command core.Command) ([]string, error) {
+func buildArgv(rootfsDir, workdir, taskDir, memoryFlag string, command core.Command) ([]string, error) {
 	dir := command.Dir
 	if dir == "" {
 		dir = workdir
@@ -74,7 +71,7 @@ func buildArgv(sandlockExecutable, rootfsDir, workdir, taskDir, memoryFlag strin
 
 	argv := []string{
 		"unshare", "--user", "--map-root-user", "--mount", "--pid", "--fork", "--",
-		"/bin/sh", "-c", pivotShell, "aries-sandlock", rootfsDir, workdir, taskDir, dir, sandlockExecutable,
+		"/bin/sh", "-c", pivotShell, "aries-sandlock", rootfsDir, workdir, taskDir, dir,
 	}
 	return append(argv, sandlockArgs...), nil
 }

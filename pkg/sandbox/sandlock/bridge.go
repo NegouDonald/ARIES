@@ -125,7 +125,7 @@ func (s *Sandbox) ExecStream(ctx context.Context, command core.Command, stdin io
 	if err := validateCommand(command); err != nil {
 		return core.CommandResult{ExitCode: -1}, fmt.Errorf("invalid sandlock command: %w", err)
 	}
-	argv, err := buildArgv(s.executable, s.rootfsDir, s.workdir, s.taskDir, s.memoryFlag, command)
+	argv, err := buildArgv(s.rootfsDir, s.workdir, s.taskDir, s.memoryFlag, command)
 	if err != nil {
 		return core.CommandResult{ExitCode: -1}, err
 	}

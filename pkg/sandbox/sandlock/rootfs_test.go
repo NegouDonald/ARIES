@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/moby/moby/api/types/image"
@@ -171,12 +172,19 @@ func TestMaterializeRootfsExtractsOnce(t *testing.T) {
 	fake := &fakeRootfsClient{imageID: "sha256:abc123", tarContent: buildFakeImageTar(t)}
 	cacheDir := t.TempDir()
 
-	destination, err := materializeRootfs(context.Background(), fake, cacheDir, "example.com/task:v1", "/testbed")
+	destination, err := materializeRootfs(context.Background(), fake, cacheDir, "example.com/task:v1", "/testbed", "/bin/sh")
 	if err != nil {
 		t.Fatalf("materializeRootfs: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(destination, "testbed", "README")); err != nil {
 		t.Errorf("extracted rootfs missing seed file: %v", err)
+	}
+	embedded, err := os.Stat(filepath.Join(destination, strings.TrimPrefix(inContainerSandlockPath, "/")))
+	if err != nil {
+		t.Fatalf("embedded sandlock binary missing: %v", err)
+	}
+	if embedded.Mode().Perm()&0o111 == 0 {
+		t.Errorf("embedded sandlock binary is not executable: mode %v", embedded.Mode())
 	}
 	if fake.copyCalls != 1 {
 		t.Errorf("copyCalls = %d, want 1", fake.copyCalls)
@@ -186,7 +194,7 @@ func TestMaterializeRootfsExtractsOnce(t *testing.T) {
 	}
 
 	// A second call for the same image must hit the cache, not extract again.
-	second, err := materializeRootfs(context.Background(), fake, cacheDir, "example.com/task:v1", "/testbed")
+	second, err := materializeRootfs(context.Background(), fake, cacheDir, "example.com/task:v1", "/testbed", "/bin/sh")
 	if err != nil {
 		t.Fatalf("materializeRootfs (cached): %v", err)
 	}
@@ -206,7 +214,7 @@ func TestMaterializeRootfsRejectsIncompleteImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake := &fakeRootfsClient{imageID: "sha256:def456", tarContent: buffer.Bytes()}
-	if _, err := materializeRootfs(context.Background(), fake, t.TempDir(), "example.com/task:v1", "/testbed"); err == nil {
+	if _, err := materializeRootfs(context.Background(), fake, t.TempDir(), "example.com/task:v1", "/testbed", "/bin/sh"); err == nil {
 		t.Error("materializeRootfs should reject an image missing /usr")
 	}
 }

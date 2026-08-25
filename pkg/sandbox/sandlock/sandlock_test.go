@@ -14,7 +14,7 @@ func newTestManager(t *testing.T, fake dockerAPI) *Manager {
 	t.Helper()
 	return &Manager{
 		docker: fake, outputDir: t.TempDir(), rootfsCacheDir: t.TempDir(),
-		executable: "/usr/local/bin/sandlock", cleanupTimeout: defaultCleanupTimeout,
+		executable: "/bin/sh", cleanupTimeout: defaultCleanupTimeout,
 		logger: logrus.StandardLogger(), newID: randomID, sandboxes: map[string]*Sandbox{},
 	}
 }
@@ -105,7 +105,7 @@ func TestSandboxExecRunsInSandboxWorkdirEnvironment(t *testing.T) {
 	// Real sandlock/unshare invocation needs a Landlock-capable host and the
 	// sandlock binary, neither available in this environment; exercise the
 	// argv-building/env path directly instead of a real Exec call here.
-	argv, err := buildArgv(sandbox.executable, sandbox.rootfsDir, sandbox.workdir, sandbox.taskDir, sandbox.memoryFlag, core.Command{Path: "/bin/echo", Args: []string{"hi"}})
+	argv, err := buildArgv(sandbox.rootfsDir, sandbox.workdir, sandbox.taskDir, sandbox.memoryFlag, core.Command{Path: "/bin/echo", Args: []string{"hi"}})
 	if err != nil {
 		t.Fatalf("buildArgv: %v", err)
 	}

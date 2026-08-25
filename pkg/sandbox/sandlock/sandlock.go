@@ -90,7 +90,6 @@ type Sandbox struct {
 	rootfsDir      string
 	workdir        string
 	taskDir        string
-	executable     string
 	memoryFlag     string
 	cleanupTimeout time.Duration
 	runID          string
@@ -198,7 +197,7 @@ func (m *Manager) Start(ctx context.Context, request core.SandboxRequest) (runne
 		return nil, fmt.Errorf("generate sandlock sandbox ID: %w", err)
 	}
 
-	rootfsDir, err := materializeRootfs(ctx, m.docker, m.rootfsCacheDir, request.Environment.Image, workdir)
+	rootfsDir, err := materializeRootfs(ctx, m.docker, m.rootfsCacheDir, request.Environment.Image, workdir, m.executable)
 	if err != nil {
 		return nil, fmt.Errorf("materialize sandlock rootfs: %w", err)
 	}
@@ -213,8 +212,8 @@ func (m *Manager) Start(ctx context.Context, request core.SandboxRequest) (runne
 
 	sandbox := &Sandbox{
 		owner: m, id: id, rootfsDir: rootfsDir, workdir: workdir, taskDir: taskDir,
-		networkName: "aries-sandlock-net-" + id,
-		executable:  m.executable, memoryFlag: memoryFlagFor(request.Environment.MemoryMB),
+		networkName:    "aries-sandlock-net-" + id,
+		memoryFlag:     memoryFlagFor(request.Environment.MemoryMB),
 		cleanupTimeout: m.cleanupTimeout, runID: request.RunID, taskID: request.TaskID,
 	}
 	if err := createReachabilityNetwork(ctx, m.docker, request, sandbox.networkName); err != nil {

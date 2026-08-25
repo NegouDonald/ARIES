@@ -14,13 +14,13 @@ import (
 
 func TestBuildArgv(t *testing.T) {
 	command := core.Command{Path: "/usr/bin/python3", Args: []string{"-c", "print(1)"}}
-	argv, err := buildArgv("/usr/local/bin/sandlock", "/cache/rootfs/abc", "/testbed", "/runs/task1/sandlock-work", "512M", command)
+	argv, err := buildArgv("/cache/rootfs/abc", "/testbed", "/runs/task1/sandlock-work", "512M", command)
 	if err != nil {
 		t.Fatalf("buildArgv: %v", err)
 	}
 	joined := strings.Join(argv, "\x00")
 	for _, want := range []string{"unshare", "--user", "--map-root-user", "--mount", "--pid", "pivot_root",
-		"/usr/local/bin/sandlock", "-w", "/testbed", "-m", "512M", "/usr/bin/python3", "print(1)"} {
+		inContainerSandlockPath, "-w", "/testbed", "-m", "512M", "/usr/bin/python3", "print(1)"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("buildArgv output missing %q\nargv: %v", want, argv)
 		}
@@ -29,14 +29,14 @@ func TestBuildArgv(t *testing.T) {
 
 func TestBuildArgvRejectsInvalidPath(t *testing.T) {
 	command := core.Command{Path: "relative-binary"}
-	if _, err := buildArgv("/bin/sandlock", "/rootfs", "/testbed", "/work", "", command); err == nil {
+	if _, err := buildArgv("/rootfs", "/testbed", "/work", "", command); err == nil {
 		t.Error("buildArgv should reject a non-absolute command path")
 	}
 }
 
 func TestBuildArgvOmitsMemoryFlagWhenUnset(t *testing.T) {
 	command := core.Command{Path: "/bin/true"}
-	argv, err := buildArgv("/bin/sandlock", "/rootfs", "/testbed", "/work", "", command)
+	argv, err := buildArgv("/rootfs", "/testbed", "/work", "", command)
 	if err != nil {
 		t.Fatalf("buildArgv: %v", err)
 	}
