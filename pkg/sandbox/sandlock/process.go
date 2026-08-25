@@ -21,6 +21,12 @@ const (
 	confirmTimeout      = 2 * time.Second
 )
 
+// inContainerSandlockPath is where the host sandlock binary is bind-mounted
+// inside the materialized rootfs before pivot_root, so it stays executable
+// after the pivot even though the pivoted filesystem is an arbitrary task
+// image that was never built with sandlock inside it.
+const inContainerSandlockPath = "/.aries-sandlock"
+
 // pivotShell remaps the sandboxed process's mount namespace root to the
 // materialized task rootfs before invoking sandlock, using the same
 // unprivileged "rootless container" trick podman/bubblewrap rely on
@@ -29,16 +35,21 @@ const (
 // privilege on the host). taskdir is bind-mounted onto workdir first so the
 // task's own writes land in its private per-task directory rather than the
 // shared, read-only cached rootfs other tasks may be reading concurrently.
+// The host sandlock binary is bind-mounted into the new root at a fixed path
+// for the same reason: after pivot_root, only paths inside the new root
+// resolve, and the task image was never built with sandlock inside it.
 const pivotShell = `set -e
-rootfs=$1; workdir=$2; taskdir=$3; dir=$4; shift 4
+rootfs=$1; workdir=$2; taskdir=$3; dir=$4; sandlockhost=$5; shift 5
 mount --bind "$taskdir" "$rootfs$workdir"
+touch "$rootfs` + inContainerSandlockPath + `"
+mount --bind "$sandlockhost" "$rootfs` + inContainerSandlockPath + `"
 mkdir -p "$rootfs/.aries-oldroot"
 mount --bind "$rootfs" "$rootfs"
 cd "$rootfs"
 pivot_root . .aries-oldroot
 umount -l /.aries-oldroot 2>/dev/null || true
 cd "$dir"
-exec "$@"`
+exec ` + inContainerSandlockPath + ` "$@"`
 
 // buildArgv assembles the unshare/pivot/sandlock invocation for one command.
 // It is pure: it performs no I/O and can be tested without a sandlock binary.
@@ -54,7 +65,7 @@ func buildArgv(sandlockExecutable, rootfsDir, workdir, taskDir, memoryFlag strin
 		return nil, fmt.Errorf("invalid sandlock command path: %w", err)
 	}
 
-	sandlockArgs := []string{sandlockExecutable, "run", "-w", workdir, "-r", "/"}
+	sandlockArgs := []string{"run", "-w", workdir, "-r", "/"}
 	if memoryFlag != "" {
 		sandlockArgs = append(sandlockArgs, "-m", memoryFlag)
 	}
@@ -63,7 +74,7 @@ func buildArgv(sandlockExecutable, rootfsDir, workdir, taskDir, memoryFlag strin
 
 	argv := []string{
 		"unshare", "--user", "--map-root-user", "--mount", "--pid", "--fork", "--",
-		"/bin/sh", "-c", pivotShell, "aries-sandlock", rootfsDir, workdir, taskDir, dir,
+		"/bin/sh", "-c", pivotShell, "aries-sandlock", rootfsDir, workdir, taskDir, dir, sandlockExecutable,
 	}
 	return append(argv, sandlockArgs...), nil
 }
