@@ -73,9 +73,15 @@ type Manager struct {
 	outputDir      string
 	rootfsCacheDir string
 	executable     string
-	cleanupTimeout time.Duration
-	logger         *logrus.Logger
-	newID          func() (string, error)
+	// sandlockLibraries/sandlockInterpreter are resolved once in New from
+	// the host sandlock binary (see runtime.go's resolveSandlockRuntime) and
+	// embedded into every materialized rootfs, so sandlock runs regardless
+	// of the task image's own libc.
+	sandlockLibraries   []string
+	sandlockInterpreter string
+	cleanupTimeout      time.Duration
+	logger              *logrus.Logger
+	newID               func() (string, error)
 
 	mu        sync.Mutex
 	sandboxes map[string]*Sandbox
@@ -100,6 +106,9 @@ type Sandbox struct {
 	// attached to it.
 	networkName  string
 	networkOwned bool
+	// interpreterPath is the in-container path of sandlock's embedded ELF
+	// interpreter, empty for a statically linked sandlock (see runtime.go).
+	interpreterPath string
 
 	mu         sync.Mutex
 	activePGID int
@@ -152,9 +161,14 @@ func New(options Options) (*Manager, error) {
 	if options.Logger == nil {
 		options.Logger = logrus.StandardLogger()
 	}
+	libraries, interpreter, err := resolveSandlockRuntime(context.Background(), options.Executable)
+	if err != nil {
+		return nil, fmt.Errorf("resolve sandlock executable runtime dependencies: %w", err)
+	}
 	return &Manager{
 		docker: api, closeClient: api.Close,
 		outputDir: outputDir, rootfsCacheDir: rootfsCacheDir, executable: options.Executable,
+		sandlockLibraries: libraries, sandlockInterpreter: interpreter,
 		cleanupTimeout: options.CleanupTimeout, logger: options.Logger, newID: randomID,
 		sandboxes: make(map[string]*Sandbox),
 	}, nil
@@ -197,7 +211,7 @@ func (m *Manager) Start(ctx context.Context, request core.SandboxRequest) (runne
 		return nil, fmt.Errorf("generate sandlock sandbox ID: %w", err)
 	}
 
-	rootfsDir, err := materializeRootfs(ctx, m.docker, m.rootfsCacheDir, request.Environment.Image, workdir, m.executable)
+	rootfsDir, err := materializeRootfs(ctx, m.docker, m.rootfsCacheDir, request.Environment.Image, workdir, m.executable, m.sandlockLibraries)
 	if err != nil {
 		return nil, fmt.Errorf("materialize sandlock rootfs: %w", err)
 	}
@@ -210,11 +224,16 @@ func (m *Manager) Start(ctx context.Context, request core.SandboxRequest) (runne
 		return nil, fmt.Errorf("seed sandlock task work directory: %w", err)
 	}
 
+	interpreterPath := ""
+	if m.sandlockInterpreter != "" {
+		interpreterPath = inContainerLibDir + "/" + m.sandlockInterpreter
+	}
 	sandbox := &Sandbox{
 		owner: m, id: id, rootfsDir: rootfsDir, workdir: workdir, taskDir: taskDir,
-		networkName:    "aries-sandlock-net-" + id,
-		memoryFlag:     memoryFlagFor(request.Environment.MemoryMB),
-		cleanupTimeout: m.cleanupTimeout, runID: request.RunID, taskID: request.TaskID,
+		networkName:     "aries-sandlock-net-" + id,
+		memoryFlag:      memoryFlagFor(request.Environment.MemoryMB),
+		interpreterPath: interpreterPath,
+		cleanupTimeout:  m.cleanupTimeout, runID: request.RunID, taskID: request.TaskID,
 	}
 	if err := createReachabilityNetwork(ctx, m.docker, request, sandbox.networkName); err != nil {
 		os.RemoveAll(taskDir)

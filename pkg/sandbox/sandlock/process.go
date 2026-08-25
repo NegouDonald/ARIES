@@ -22,11 +22,11 @@ const (
 )
 
 // inContainerSandlockPath is where the host sandlock binary is copied inside
-// the materialized rootfs (see rootfs.go's copySandlockBinary), so it is
-// already an ordinary file by the time this shell pivots into that tree.
-// Bind-mounting the binary in at exec time instead was tried first and
-// proved fragile: the mount did not reliably survive pivot_root with usable
-// exec permission in practice, even with a recursive (--rbind) self-mount.
+// the materialized rootfs (see rootfs.go/runtime.go), so it is already an
+// ordinary file by the time this shell pivots into that tree. Bind-mounting
+// the binary in at exec time instead was tried first and proved fragile: the
+// mount did not reliably survive pivot_root with usable exec permission in
+// practice, even with a recursive (--rbind) self-mount.
 const inContainerSandlockPath = "/.aries-sandlock"
 
 // pivotShell remaps the sandboxed process's mount namespace root to the
@@ -37,8 +37,14 @@ const inContainerSandlockPath = "/.aries-sandlock"
 // privilege on the host). taskdir is bind-mounted onto workdir first so the
 // task's own writes land in its private per-task directory rather than the
 // shared, read-only cached rootfs other tasks may be reading concurrently.
+// If sandlock is dynamically linked (the common case: sandlock has no static
+// build as of v0.8.6), interpreter is the in-container path of its embedded
+// ELF interpreter (see runtime.go) and is invoked explicitly with
+// --library-path so sandlock runs regardless of the task image's own libc
+// (e.g. Alpine's musl, which lacks glibc entirely); interpreter is empty for
+// a statically linked sandlock, which needs no such prefix.
 const pivotShell = `set -e
-rootfs=$1; workdir=$2; taskdir=$3; dir=$4; shift 4
+rootfs=$1; workdir=$2; taskdir=$3; dir=$4; interpreter=$5; shift 5
 mount --bind "$taskdir" "$rootfs$workdir"
 mkdir -p "$rootfs/.aries-oldroot"
 mount --bind "$rootfs" "$rootfs"
@@ -46,11 +52,17 @@ cd "$rootfs"
 pivot_root . .aries-oldroot
 umount -l /.aries-oldroot 2>/dev/null || true
 cd "$dir"
-exec ` + inContainerSandlockPath + ` "$@"`
+if [ -n "$interpreter" ]; then
+  exec "$interpreter" --library-path ` + inContainerLibDir + ` ` + inContainerSandlockPath + ` "$@"
+else
+  exec ` + inContainerSandlockPath + ` "$@"
+fi`
 
 // buildArgv assembles the unshare/pivot/sandlock invocation for one command.
 // It is pure: it performs no I/O and can be tested without a sandlock binary.
-func buildArgv(rootfsDir, workdir, taskDir, memoryFlag string, command core.Command) ([]string, error) {
+// interpreterPath is the in-container path of sandlock's ELF interpreter
+// (empty for a statically linked sandlock — see resolveSandlockRuntime).
+func buildArgv(rootfsDir, workdir, taskDir, memoryFlag, interpreterPath string, command core.Command) ([]string, error) {
 	dir := command.Dir
 	if dir == "" {
 		dir = workdir
@@ -71,7 +83,7 @@ func buildArgv(rootfsDir, workdir, taskDir, memoryFlag string, command core.Comm
 
 	argv := []string{
 		"unshare", "--user", "--map-root-user", "--mount", "--pid", "--fork", "--",
-		"/bin/sh", "-c", pivotShell, "aries-sandlock", rootfsDir, workdir, taskDir, dir,
+		"/bin/sh", "-c", pivotShell, "aries-sandlock", rootfsDir, workdir, taskDir, dir, interpreterPath,
 	}
 	return append(argv, sandlockArgs...), nil
 }

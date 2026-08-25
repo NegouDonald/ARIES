@@ -105,7 +105,7 @@ func TestSandboxExecRunsInSandboxWorkdirEnvironment(t *testing.T) {
 	// Real sandlock/unshare invocation needs a Landlock-capable host and the
 	// sandlock binary, neither available in this environment; exercise the
 	// argv-building/env path directly instead of a real Exec call here.
-	argv, err := buildArgv(sandbox.rootfsDir, sandbox.workdir, sandbox.taskDir, sandbox.memoryFlag, core.Command{Path: "/bin/echo", Args: []string{"hi"}})
+	argv, err := buildArgv(sandbox.rootfsDir, sandbox.workdir, sandbox.taskDir, sandbox.memoryFlag, sandbox.interpreterPath, core.Command{Path: "/bin/echo", Args: []string{"hi"}})
 	if err != nil {
 		t.Fatalf("buildArgv: %v", err)
 	}

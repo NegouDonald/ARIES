@@ -14,7 +14,7 @@ import (
 
 func TestBuildArgv(t *testing.T) {
 	command := core.Command{Path: "/usr/bin/python3", Args: []string{"-c", "print(1)"}}
-	argv, err := buildArgv("/cache/rootfs/abc", "/testbed", "/runs/task1/sandlock-work", "512M", command)
+	argv, err := buildArgv("/cache/rootfs/abc", "/testbed", "/runs/task1/sandlock-work", "512M", "", command)
 	if err != nil {
 		t.Fatalf("buildArgv: %v", err)
 	}
@@ -29,14 +29,14 @@ func TestBuildArgv(t *testing.T) {
 
 func TestBuildArgvRejectsInvalidPath(t *testing.T) {
 	command := core.Command{Path: "relative-binary"}
-	if _, err := buildArgv("/rootfs", "/testbed", "/work", "", command); err == nil {
+	if _, err := buildArgv("/rootfs", "/testbed", "/work", "", "", command); err == nil {
 		t.Error("buildArgv should reject a non-absolute command path")
 	}
 }
 
 func TestBuildArgvOmitsMemoryFlagWhenUnset(t *testing.T) {
 	command := core.Command{Path: "/bin/true"}
-	argv, err := buildArgv("/rootfs", "/testbed", "/work", "", command)
+	argv, err := buildArgv("/rootfs", "/testbed", "/work", "", "", command)
 	if err != nil {
 		t.Fatalf("buildArgv: %v", err)
 	}
@@ -44,6 +44,18 @@ func TestBuildArgvOmitsMemoryFlagWhenUnset(t *testing.T) {
 		if token == "-m" {
 			t.Errorf("buildArgv should omit a standalone -m token when memoryFlag is empty: %v", argv)
 		}
+	}
+}
+
+func TestBuildArgvIncludesInterpreterWhenSet(t *testing.T) {
+	command := core.Command{Path: "/bin/true"}
+	argv, err := buildArgv("/rootfs", "/testbed", "/work", "", "/.aries-libs/ld-linux-x86-64.so.2", command)
+	if err != nil {
+		t.Fatalf("buildArgv: %v", err)
+	}
+	joined := strings.Join(argv, "\x00")
+	if !strings.Contains(joined, "/.aries-libs/ld-linux-x86-64.so.2") {
+		t.Errorf("buildArgv should carry the interpreter path through to the shell script args: %v", argv)
 	}
 }
 

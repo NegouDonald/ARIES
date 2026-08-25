@@ -33,13 +33,14 @@ const rootfsCompleteMarker = ".aries-rootfs-complete"
 // read by concurrent tasks using the same image, but must never be written to
 // after this call returns, since doing so would corrupt other tasks' view of
 // it. It also ensures workdir exists inside the extracted tree, since that
-// path is later used as a bind-mount target for each task's own writable copy,
-// and it copies the host sandlock binary in at inContainerSandlockPath: a
+// path is later used as a bind-mount target for each task's own writable
+// copy, and it embeds the host sandlock binary (plus, if dynamically linked,
+// its resolved shared libraries — see runtime.go) at fixed paths: a
 // bind-mount of the binary performed just before pivot_root proved fragile in
 // practice (the mount didn't reliably survive the pivot with usable exec
 // permission), whereas a plain file baked into the cached tree at
 // materialization time is not exposed to that timing at all.
-func materializeRootfs(ctx context.Context, api rootfsClient, cacheDir, image, workdir, sandlockExecutable string) (string, error) {
+func materializeRootfs(ctx context.Context, api rootfsClient, cacheDir, image, workdir, sandlockExecutable string, sandlockLibraries []string) (string, error) {
 	inspection, err := api.ImageInspect(ctx, image)
 	if err != nil {
 		return "", fmt.Errorf("inspect sandlock rootfs image %q: %w", image, err)
@@ -84,8 +85,8 @@ func materializeRootfs(ctx context.Context, api rootfsClient, cacheDir, image, w
 	if err := os.MkdirAll(filepath.Join(staging, strings.TrimPrefix(workdir, "/")), 0o755); err != nil {
 		return "", fmt.Errorf("prepare sandlock rootfs workdir: %w", err)
 	}
-	if err := copySandlockBinary(sandlockExecutable, filepath.Join(staging, strings.TrimPrefix(inContainerSandlockPath, "/"))); err != nil {
-		return "", fmt.Errorf("embed sandlock binary in rootfs: %w", err)
+	if err := embedSandlockRuntime(staging, sandlockExecutable, sandlockLibraries); err != nil {
+		return "", fmt.Errorf("embed sandlock runtime in rootfs: %w", err)
 	}
 
 	if err := os.RemoveAll(destination); err != nil {
@@ -180,21 +181,6 @@ func writeRegularFile(target string, content io.Reader, mode os.FileMode) error 
 		return err
 	}
 	return file.Close()
-}
-
-// copySandlockBinary copies the host sandlock executable into the rootfs
-// being materialized, explicitly setting the executable bit afterward since
-// os.OpenFile's mode argument is still filtered by umask on creation.
-func copySandlockBinary(sandlockExecutable, target string) error {
-	source, err := os.Open(sandlockExecutable)
-	if err != nil {
-		return fmt.Errorf("open host sandlock executable: %w", err)
-	}
-	defer source.Close()
-	if err := writeRegularFile(target, source, 0o755); err != nil {
-		return err
-	}
-	return os.Chmod(target, 0o755)
 }
 
 // seedWorkdir copies workdir's content from the shared, read-only rootfs into
